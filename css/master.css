@@ -1,7 +1,36 @@
 * {
   font-family: "Consolas";
+  font-size: 18px;
 }
 
-h1 {
-  color: red;
+#innerBody {
+    max-width: 850px;
+    min-width: 700px;
+    margin: 0px auto;
+    overflow: hidden;
+    zoom: 1;
+}
+
+#top_header {
+    overflow: hidden;
+    zoom: 1;
+}
+
+#left_header {
+    float: left;
+    font-size: 36px;
+}
+
+#right_header {
+    float: right;
+    font-size: 22px;
+}
+
+.contents {
+    margin: 45px 0px;
+}
+
+.second_title {
+    font-size: 28px;
+    margin-bottom: 5px;
 }
