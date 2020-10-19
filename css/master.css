@@ -1,5 +1,5 @@
 * {
-  font-family: "Consolas";
+  font-family: "Helvetica";
   font-size: 18px;
 }
 
@@ -28,9 +28,45 @@
 
 .contents {
     margin: 45px 0px;
+    overflow: hidden;
+    zoom: 1;
 }
 
 .second_title {
     font-size: 28px;
     margin-bottom: 5px;
+}
+
+.description {
+    float: left;
+}
+
+#self_intro_description {
+    width: 70%;
+}
+
+#web_content_description {
+    width: 60%;
+}
+
+#web_content_img img{
+    width: 300px;
+}
+
+#web_content_img {
+    float: right;
+}
+
+.description a{
+    color: blue;
+    text-decoration: none;
+}
+
+
+#avatar {
+    float: right;
+}
+
+#avatar img {
+    width: 225px;
 }
