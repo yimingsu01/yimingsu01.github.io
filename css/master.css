@@ -30,7 +30,11 @@
     margin: 45px 0px;
     overflow: hidden;
     zoom: 1;
+}
 
+.inner_content {
+    /* line-height: 200px; */
+    /* height: 210px; */
 }
 
 .second_title {
@@ -40,10 +44,21 @@
 
 .description {
     float: left;
+    line-height: 200px;
 }
+
+
+
 
 #self_intro_description {
     width: 70%;
+    /* height: 200px; */
+}
+
+.description div {
+    display: inline-block;
+    vertical-align: middle;
+    line-height: normal;
 }
 
 #web_content_description {
@@ -58,16 +73,27 @@
     float: right;
 }
 
-.description a{
-    color: blue;
+/* .description a {
+    color: black;
     text-decoration: none;
-}
-
+} */
 
 #avatar {
-    float: right;
+    float: left;
 }
 
 #avatar img {
     width: 225px;
+}
+
+#php_content_img {
+    float: right;
+}
+
+#php_content_description {
+    width: 60%;
+}
+
+#php_content_img img {
+    width: 300px;
 }
