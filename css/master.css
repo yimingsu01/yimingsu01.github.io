@@ -45,14 +45,17 @@
 .description {
     float: left;
     line-height: 200px;
+    width: 60%;
 }
-
-
-
 
 #self_intro_description {
     width: 70%;
     /* height: 200px; */
+}
+
+
+#avatar img {
+    width: 225px;
 }
 
 .description div {
@@ -61,39 +64,11 @@
     line-height: normal;
 }
 
-#web_content_description {
-    width: 60%;
-}
 
-#web_content_img img{
+.example_img img {
     width: 300px;
 }
 
-#web_content_img {
+.example_img {
     float: right;
-}
-
-/* .description a {
-    color: black;
-    text-decoration: none;
-} */
-
-#avatar {
-    float: left;
-}
-
-#avatar img {
-    width: 225px;
-}
-
-#php_content_img {
-    float: right;
-}
-
-#php_content_description {
-    width: 60%;
-}
-
-#php_content_img img {
-    width: 300px;
 }
