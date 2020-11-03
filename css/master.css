@@ -24,6 +24,13 @@
 #right_header {
     float: right;
     font-size: 22px;
+    border-bottom: 2px solid blue;
+}
+
+#right_header a {
+    color: red;
+    text-decoration: none;
+    padding: 0px 3px;
 }
 
 .contents {
