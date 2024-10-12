@@ -4,6 +4,14 @@
     padding: 0;
 }
 
+.container {
+    width: 800px;
+    margin: auto;
+    overflow: hidden;
+    padding: 20px;
+    background: #fff;
+}
+
 body {
     font-family: 'Helvetica', 'Cursive', sans-serif;
     color: #333;
