@@ -41,6 +41,13 @@ ul {
     padding: 0;
 }
 
+.introduction ul li {
+    list-style: inside;
+    padding: 0px;
+    margin-bottom: 0px;
+    background-color: #fff;
+}
+
 ul li {
     margin-bottom: 10px;
     padding: 5px;
