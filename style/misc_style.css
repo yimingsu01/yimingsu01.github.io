@@ -72,3 +72,42 @@ ul li {
 .quote-desc {
     font-size: 14px;
 }
+
+.quote-dontgiveup {
+    background-color: rgb(188, 223, 253);
+}
+
+.quote-dontgiveup p {
+    margin-left: 10px;
+    margin-right: 10px;
+}
+
+.quote-dontgiveup h2 {
+    margin-left: 5px;
+}
+
+.quote-happiness {
+    background-color: rgb(255, 205, 135);
+}
+
+.quote-happiness p {
+    margin-left: 10px;
+    margin-right: 10px;
+}
+
+.quote-happiness h2 {
+    margin-left: 5px;
+}
+
+.quote-flashgames {
+    background-color: rgb(255, 240, 107);
+}
+
+.quote-flashgames p {
+    margin-left: 10px;
+    margin-right: 10px;
+}
+
+.quote-flashgames h2 {
+    margin-left: 5px;
+}
