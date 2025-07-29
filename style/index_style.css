@@ -58,6 +58,10 @@ ul li {
     background-color: #eef;
 }
 
+.publications ul li ul {
+    margin-left: 20px;
+}
+
 .talks ul li {
     background-color: #eef;
 }
