@@ -10,7 +10,7 @@
 <body>
     <div class="container">
         <header class="header">
-            <img id="avatar" src="./media/rollercoaster.jpg" alt="Windows 7 rollercoaster">
+            <img id="avatar" src="./media/avatar.jpg" alt="2023 Winter, Yiming at Millennial Park, Chicago">
             <div>
                 <h1 id="name">Yiming Su</h1>
                 <p id="curr-edu">B.Sc. in Computer Science, The University of Chicago.</p>
@@ -20,22 +20,13 @@
         
         <section class="introduction">
             <h2>whoami</h2>
-            <p>I'm a second-year Computer Science PhD at The University of Illinois-Urbana Champaign. I currently work with Prof. Tianyin Xu on <b>Agentic/Cloud Systems reliability</b>.</p>
+            <p>I'm a second-year Computer Science PhD at The University of Illinois-Urbana Champaign, advised by Prof. Tianyin Xu.</p>
+            <p>I work on agentic systems reliabilty: I design system-side frameworks and tooling support to reduce or elminate the impacts of unreliable agent behaviors.</p>
 
-            <p>I'm interested in the reliability of all kinds of systems: </p>
-            <ul>
-                <li><b>AIOps/Agentic Frameworks & Reliability</b>: LangGraph, AIOpsLab, ITBench, etc.</li>
-                <li><b>Traditional/Cloud-native Distributed systems</b>: TiDB, Cassandra, etc.</li>
-                <li>and so on...</li>
-            </ul>
-                
-            <p>Generally, I'm mostly interested in these questions, and I plan to use my PhD thesis to answer them:</p>
-            <ul>
-                <li>Does the system break? (yes, otherwise I'm out of work :))</li>
-                <li><b>Why/How</b> does the system break?</li>
-                <li>How can we <b>patch</b> the failures or <b>prevent</b> them?</li>
-                <li>How can we build systems that <b>doesn't break as frequent?</b> or potentially, <b>at all?</b></li>
-            </ul>
+            <h2>Research</h2>
+            <p>LLM-powered agents are inherently nondeterministic in their behaviors, preventing us from applying them in safety-critical systems (e.g., large-scale datacenters), where us humans can greatly benefit from their autonomous nature and data-processing capabilities. My research focuses on reducing or elminate the impacts of this unpredictable behavior. The efforts include providing systems-side frameworks that prevent any harmful behaviors, or providing tooling support for the agent at runtime. My research has culminated in <a href="https://arxiv.org/abs/2506.02009">Stratus</a>, a multi-agent systems that enables autonomous SRE incident management <b>through a transaction-like semantics</b>, and previously, <a href="https://dl.acm.org/doi/10.1145/3593856.3595910">HotGPT</a>, an attempt to understand the edges and limits of LLMs before time.</p>
+
+            <p>Before working on agents, I focused on distributed systems reliability. My research focused on the semantics challenge of managing traditional distributed systems (e.g., Apache Cassandra) on cloud-native platforms (e.g., Kubernetes). Large-scale distributed software have complicated management semantics that are hard to capture in management programs (termed "operators"). We conducted an effort to understand and detect such semantics bug in operator programs, which is accepted into <a href="https://tianyin.github.io/pub/oat.pdf">NSDI '26</a>. We found 86 bugs (53 confirmed and 28 fixed) in popular operators of distributed systems.</p>
 
             <p>A short bio can be found <a href="./bio.html">here</a>.</p>
         </section>
@@ -50,11 +41,16 @@
         
         <section class="publications">
             <h2>Publications</h2>
-            (*: co-primary authors)
+            
             <ul>
+                <li><u>Arxiv Preprint</u><br></tab><b>SysMoBench: Evaluating AI on Formally Modeling Complex Real-World Systems</b> [<a href="https://arxiv.org/abs/2509.23130">pdf</a>]
+                    <ul>
+                        <li>Qian Cheng, Ruize Tang, Emilie Ma, Finn Hackett, Peiyang He, <b>Yiming Su</b>, Ivan Beschastnikh, Yu Huang, Xiaoxing Ma, Tianyin Xu</li>
+                    </ul>
+                </li>
                 <li><u>NeurIPS 2025</u><br></tab><b>STRATUS: A Multi-agent System for Autonomous Reliability Engineering of Modern Clouds.</b> [<a href="https://arxiv.org/abs/2506.02009">pdf</a>]
                     <ul>
-                        <li>Yinfang Chen*, Jiaqi Pan*, Jackson Clark*, <b>Yiming Su*</b>, Noah Zheutlin, Bhavya Bhavya, Rohan Arora, Yu Deng, Saurabh Jha, Tianyin Xu </li>
+                        <li>Yinfang Chen*, Jiaqi Pan*, Jackson Clark*, <b>Yiming Su*</b>, Noah Zheutlin, Bhavya Bhavya, Rohan Arora, Yu Deng, Saurabh Jha, Tianyin Xu  <b>(*: co-primary authors)</b></li>
                     </ul>
                 </li>
                 <li><u>NSDI '26</u><br></tab><b>Who Watches the Watchers? On the Reliability of Softwarizing Cloud Application Management</b> [<a href="later">pdf</a>]
@@ -64,7 +60,7 @@
                 </li>
                 <li><u>SOSP '24</u><br><b>If At First You Don’t Succeed, Try, Try, Again...? Insights and LLM-informed Tooling for Detecting Retry Bugs in Software Systems</b> [<a href="https://www.microsoft.com/en-us/research/publication/if-at-first-you-dont-succeed-try-try-again-insights-and-llm-informed-tooling-for-detecting-retry-bugs-in-software-systems/">pdf</a>]
                     <ul>
-                        <li>Bogdan Alexandru Stoica*, Utsav Sethi*, <b>Yiming Su</b>, Cyrus Zhou, Shan Lu, Jonathan Mace, Madan Musuvathi, Suman Nath</li>
+                        <li>Bogdan Alexandru Stoica*, Utsav Sethi*, <b>Yiming Su</b>, Cyrus Zhou, Shan Lu, Jonathan Mace, Madan Musuvathi, Suman Nath  <b>(*: co-primary authors)</b></li>
                     </ul>
                 </li>
                 <li><u>HotOS '23</u><br><b>HotGPT: How to Make Software Documentation More Useful with a Large Language Model?</b> [<a href="https://dl.acm.org/doi/10.1145/3593856.3595910">pdf</a>]
