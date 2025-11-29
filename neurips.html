@@ -276,14 +276,12 @@
                 <a href="./index.html">Full homepage →</a>
             </div>
         </section>
-
-        <p class="footnote">Scan via QR → quick overview of my research focus & key papers.</p>
     </main>
     <script>
         (function () {
             try {
                 var hour = new Date().getHours();
-                var isDaytime = hour >= 7 && hour < 23; // 7am–7pm
+                var isDaytime = hour >= 7 && hour < 19; // 7am–7pm
                 if (isDaytime) {
                     document.body.classList.add('light-mode');
                 }
