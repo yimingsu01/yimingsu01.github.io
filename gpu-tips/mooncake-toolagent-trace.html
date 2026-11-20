@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>What one record of the Mooncake tool-agent trace looks like | gpu-tips</title>
+    <link rel="stylesheet" href="../style/index_style.css">
+    <style>
+        :root {
+            --a: #2a78d6; --b: #eb6834; --c: #1baf7a; --s: #52514e;
+            --ink: #0b0b0b; --ink2: #52514e; --muted: #77756f;
+            --line: #eaeaea; --wash: #f8f8f8;
+        }
+        .container.note { width: auto; max-width: 800px; }
+        .note h3 { color: #333; margin: 1.5em 0 .3em; }
+        .note code { font-family: Consolas, Menlo, monospace; font-size: .92em; background: var(--wash); padding: 1px 4px; }
+        .note pre { background: var(--wash); border: 1px solid var(--line); padding: 10px 12px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+        .note pre code { background: none; padding: 0; }
+        .note table { border-collapse: collapse; width: 100%; margin: 12px 0 18px; font-size: 15px; }
+        .note th, .note td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+        .note th { background: var(--wash); }
+        .note td.num, .note th.num { text-align: right; font-variant-numeric: tabular-nums; }
+        .fig { border: 2px solid var(--line); padding: 16px; margin: 16px 0 22px; background: #fff; overflow-x: auto; }
+        .rowb { display: flex; align-items: center; gap: 3px; margin: 6px 0; min-width: 620px; }
+        .rowb .lab { flex: 0 0 96px; font-family: Consolas, Menlo, monospace; font-size: 12px; color: var(--ink2); }
+        .blk { flex: 0 0 30px; height: 24px; border-radius: 3px; color: #fff; font-family: Consolas, Menlo, monospace; font-size: 11px;
+               display: flex; align-items: center; justify-content: center; }
+        .blk.s { background: var(--s); } .blk.a { background: var(--a); } .blk.b { background: var(--b); } .blk.c { background: var(--c); }
+        .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink2); margin-top: 10px; }
+        .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+    </style>
+</head>
+<body>
+    <div class="container note">
+        <header class="header">
+            <h2>What one record of the Mooncake tool-agent trace looks like</h2>
+            <p>gpu-tips, note 2. November 20th, 2026.</p>
+        </header>
+
+        <section>
+            <p>The Mooncake paper (FAST '25) published three request traces from a production LLM service. Many KV cache and routing benchmarks replay them. This note shows what one record of the tool-agent trace contains, what the whole trace looks like, and how to turn a record into a request.</p>
+            <p>The trace has no text. Each record gives the lengths of a request and a list of block hashes. The files are in the <a href="https://github.com/kvcache-ai/Mooncake/tree/main/FAST25-release/traces">Mooncake repository</a>.</p>
+        </section>
+
+        <section>
+            <h2>One record</h2>
+            <p>The file is JSON Lines. One line is one request. This is the first line of <code>toolagent_trace.jsonl</code>.</p>
+<pre><code>{"timestamp": 0, "input_length": 6758, "output_length": 500,
+ "hash_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]}</code></pre>
+            <table>
+                <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+                <tbody>
+                    <tr><td><code>timestamp</code></td><td>Arrival time in milliseconds from the start of the trace.</td></tr>
+                    <tr><td><code>input_length</code></td><td>Prompt length in tokens.</td></tr>
+                    <tr><td><code>output_length</code></td><td>Number of generated tokens.</td></tr>
+                    <tr><td><code>hash_ids</code></td><td>One ID for each 512-token block of the prompt, in order. The number of IDs is the input length divided by 512, rounded up.</td></tr>
+                </tbody>
+            </table>
+            <p>The example has 6,758 input tokens. That is 13 full blocks and one partial block, so the list has 14 IDs.</p>
+        </section>
+
+        <section>
+            <h2>How the block IDs show prefix sharing</h2>
+            <p>An ID identifies a block together with all the blocks before it. Two requests that start with the same IDs have the same tokens in that part of the prompt. Thus the KV cache of one request can serve the shared part of the other.</p>
+            <p>The figure shows the first, second and fourth records of the trace. All three start with block 0. After that block, each request has its own IDs.</p>
+            <div class="fig" role="img" aria-label="Three records as rows of blocks. Each row starts with the shared block 0. The first row continues with blocks 1 to 13, the second with blocks 14 to 27, the third with blocks 42 to 45.">
+                <div class="rowb"><span class="lab">record 1</span><span class="blk s">0</span><span class="blk a">1</span><span class="blk a">2</span><span class="blk a">3</span><span class="blk a">4</span><span class="blk a">5</span><span class="blk a">6</span><span class="blk a">7</span><span class="blk a">8</span><span class="blk a">9</span><span class="blk a">10</span><span class="blk a">11</span><span class="blk a">12</span><span class="blk a">13</span></div>
+                <div class="rowb"><span class="lab">record 2</span><span class="blk s">0</span><span class="blk b">14</span><span class="blk b">15</span><span class="blk b">16</span><span class="blk b">17</span><span class="blk b">18</span><span class="blk b">19</span><span class="blk b">20</span><span class="blk b">21</span><span class="blk b">22</span><span class="blk b">23</span><span class="blk b">24</span><span class="blk b">25</span><span class="blk b">26</span><span class="blk b">27</span></div>
+                <div class="rowb"><span class="lab">record 4</span><span class="blk s">0</span><span class="blk c">42</span><span class="blk c">43</span><span class="blk c">44</span><span class="blk c">45</span></div>
+                <div class="legend">
+                    <span><span class="sw" style="background: var(--s)"></span>Shared by all three</span>
+                    <span><span class="sw" style="background: var(--a)"></span>Only record 1</span>
+                    <span><span class="sw" style="background: var(--b)"></span>Only record 2</span>
+                    <span><span class="sw" style="background: var(--c)"></span>Only record 4</span>
+                </div>
+            </div>
+            <p>The shared block is 512 tokens. It is probably a system prompt that many agents use. A later request of the same agent session repeats a longer list, for example blocks 0 to 13 and then new blocks.</p>
+            <p>The trace has no session ID. A session is visible only as a sequence of requests whose block lists extend each other.</p>
+        </section>
+
+        <section>
+            <h2>The whole trace</h2>
+            <p>I computed these values from the file.</p>
+            <table>
+                <thead><tr><th>Property</th><th>Value</th></tr></thead>
+                <tbody>
+                    <tr><td>Requests</td><td>23,608</td></tr>
+                    <tr><td>Duration</td><td>59 minutes</td></tr>
+                    <tr><td>Mean rate</td><td>6.7 requests per second</td></tr>
+                    <tr><td>Blocks per request</td><td>Median 13, maximum 247</td></tr>
+                    <tr><td>Distinct block IDs</td><td>183,300 of 409,616 block references</td></tr>
+                    <tr><td>Blocks that repeat the prefix of an earlier request</td><td>55%</td></tr>
+                </tbody>
+            </table>
+            <table>
+                <thead><tr><th>Tokens</th><th class="num">p10</th><th class="num">p50</th><th class="num">Mean</th><th class="num">p90</th><th class="num">p99</th><th class="num">Max</th></tr></thead>
+                <tbody>
+                    <tr><td>Input</td><td class="num">1,814</td><td class="num">6,346</td><td class="num">8,596</td><td class="num">16,804</td><td class="num">61,525</td><td class="num">126,195</td></tr>
+                    <tr><td>Output</td><td class="num">3</td><td class="num">30</td><td class="num">182</td><td class="num">507</td><td class="num">897</td><td class="num">2,000</td></tr>
+                </tbody>
+            </table>
+            <h3>What the values tell</h3>
+            <ul>
+                <li><b>The prompts are long and the outputs are short.</b> Half of the requests generate 30 tokens or fewer. That is typical for a tool call. One tenth generate about 500 tokens. That is typical for a final answer. For this trace, the prefill decides most of the latency.</li>
+                <li><b>55% is the upper limit of cache reuse.</b> A cache with unlimited size and one server reuses 55% of the blocks. A cluster gets near this value only if the router sends a request to a server that holds the earlier prefix.</li>
+                <li><b>The tail is very long.</b> One request in 100 has more than 61,000 input tokens. A model with a 32,768-token context cannot take these requests without a cut.</li>
+            </ul>
+        </section>
+
+        <section>
+            <h2>How to turn a record into a request</h2>
+            <p>The trace gives no text, so the benchmark must make the tokens. This procedure keeps the lengths and the prefix sharing exact.</p>
+            <ol>
+                <li>Use each block ID as the seed of a random generator. Draw 512 token IDs from the vocabulary of the model. The same block ID always gives the same 512 tokens.</li>
+                <li>Join the blocks in the order of <code>hash_ids</code>. Cut the result to <code>input_length</code> tokens.</li>
+                <li>Send the list of token IDs as the <code>prompt</code> of <code>/v1/completions</code>. vLLM accepts token IDs there, so no tokenizer changes the length.</li>
+                <li>Set <code>max_tokens</code> to <code>output_length</code>.</li>
+                <li>Send the request at its <code>timestamp</code>.</li>
+            </ol>
+            <p>Keep the random token IDs below the special tokens of the model. Then no random token ends the turn or starts a tool call.</p>
+            <p>If a request is longer than the context of the model, keep the leading whole blocks that fit. Do not drop the request. A dropped request also removes the cache entries that later requests of the session use.</p>
+        </section>
+
+        <section>
+            <h2>Is the prompt readable?</h2>
+            <p>No. The prompt is random token IDs. If you decode it, you get unrelated word pieces from many languages.</p>
+            <p>This is not a problem for cache measurements. The KV cache, the prefix cache of vLLM and LMCache all use the token IDs as the key. They do not read the meaning. The prefill time and the cache load time depend on the number of tokens, not on their content.</p>
+            <h3>What this method cannot measure</h3>
+            <ul>
+                <li><b>The output.</b> The model continues random input, so the output has no meaning. If the model stops early at an end-of-sequence token, the output is shorter than the trace states. Check the measured output lengths.</li>
+                <li><b>Anything that depends on content.</b> Answer quality, stop conditions and tool-call parsing are not in the measurement.</li>
+                <li><b>The tokenizer cost.</b> A real request arrives as text, and the server or the router must tokenize it. A prompt of token IDs skips this step.</li>
+            </ul>
+        </section>
+
+        <p>Back to <a href="./index.html">gpu-tips</a> or <a href="../index.html">Home</a></p>
+        <p id="redirection">My past life... <a href="../index2.html">here</a></p>
+    </div>
+</body>
+</html>
