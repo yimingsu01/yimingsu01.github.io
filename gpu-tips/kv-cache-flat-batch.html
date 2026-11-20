@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How a batched forward pass writes the KV cache | gpu-tips</title>
+    <link rel="stylesheet" href="../style/index_style.css">
+    <style>
+        :root {
+            --a: #2a78d6;  --a-t: #d6e5f8;
+            --b: #eb6834;  --b-t: #fbe1d6;
+            --c: #1baf7a;  --c-t: #d2f0e4;
+            --free: #ecebe7;
+            --ink: #0b0b0b; --ink2: #52514e; --muted: #77756f;
+            --line: #eaeaea; --navy: #13294B; --wash: #f8f8f8; --lilac: #eef;
+            --slate: #52514e; --slate-t: #c4c3bd;
+        }
+        @property --f { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+
+        .container.note { width: auto; max-width: 800px; }
+        .note h3 { color: #333; margin: 1.5em 0 .3em; }
+        .note code { font-family: Consolas, Menlo, monospace; font-size: .92em; background: var(--wash); padding: 1px 4px; }
+        .note table { border-collapse: collapse; width: 100%; margin: 12px 0 18px; font-size: 15px; }
+        .note th, .note td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+        .note th { background: var(--wash); }
+        .note td.num, .note th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+        .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; flex: none; }
+        .sw.A { background: var(--a); } .sw.B { background: var(--b); } .sw.C { background: var(--c); }
+        .sw.F { background: var(--free); box-shadow: inset 0 0 0 1px #c9c8c2; }
+        .sw.S { background: var(--slate); } .sw.D { background: var(--slate-t); }
+        .sw.P { background: repeating-linear-gradient(135deg, #cfcec8 0 2px, #f3f2ee 2px 6px); box-shadow: inset 0 0 0 1px #c9c8c2; }
+
+        .fig { border: 2px solid var(--line); padding: 16px; margin: 16px 0 22px; background: #fff; }
+        .ptitle { font-family: Consolas, Menlo, monospace; font-size: 13px; color: var(--ink2); margin: 14px 0 6px; }
+        .ptitle b { color: var(--ink); }
+
+        /* stepper */
+        .steps { display: flex; flex-wrap: wrap; gap: 4px; }
+        .steps button, .nav button, .seg button {
+            font: inherit; font-size: 14px; padding: 5px 10px; cursor: pointer;
+            border: 1px solid #c9c8c2; background: var(--wash); color: var(--ink); border-radius: 3px;
+        }
+        .steps button[aria-selected="true"], .seg button[aria-pressed="true"] { background: var(--navy); border-color: var(--navy); color: #fff; }
+        .steps button:focus-visible, .nav button:focus-visible, .seg button:focus-visible, .col:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
+        .nav { display: flex; gap: 4px; margin-top: 8px; }
+        .nav button:disabled { opacity: .4; cursor: default; }
+        .cap { margin: 10px 0 0; min-height: 6.6em; }
+        .cap b { color: var(--navy); }
+
+        /* batch strip */
+        .strip { display: flex; gap: 2px; overflow-x: auto; padding-bottom: 2px; }
+        .col, .lab { flex: 1 1 0; min-width: 88px; display: flex; flex-direction: column; font-size: 13px; overflow: hidden; }
+        .lab { flex: 0 0 92px; min-width: 92px; color: var(--ink2); font-family: Consolas, Menlo, monospace; font-size: 12px; }
+        .col { font: inherit; font-size: 13px; text-align: left; padding: 0; margin: 0; cursor: pointer;
+               border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 3px; }
+        .col:hover { background: var(--wash); }
+        .col.sel { background: var(--lilac); border-color: var(--navy); }
+        .col.gap { cursor: default; color: var(--muted); }
+        .col.gap:hover { background: #fff; }
+        .col.gap.sel, .col.gap.sel:hover { background: var(--lilac); color: var(--ink); }
+        .col.out { opacity: .38; }
+        .cell { height: 27px; display: flex; align-items: center; padding: 0 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .lab .cell { padding-left: 0; }
+        .cell.r { color: var(--muted); font-size: 12px; }
+        .cell.st { font-size: 12px; border-top: 1px solid var(--line); }
+        .chip { display: inline-block; min-width: 15px; text-align: center; font-family: Consolas, Menlo, monospace; font-size: 11px;
+                border: 1px solid #b9b8b2; border-radius: 3px; margin-right: 2px; padding: 0 1px; line-height: 16px; background: #fff; }
+        .chip.on { background: var(--navy); border-color: var(--navy); color: #fff; }
+        .attend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 10px; font-size: 14px; }
+        .attend[hidden] { display: none; }
+        .attend input[type=range] { width: 240px; accent-color: var(--navy); }
+        .attend output { font-variant-numeric: tabular-nums; }
+        .readout { background: var(--lilac); padding: 4px 8px; }
+
+        /* pool */
+        .lower { display: grid; grid-template-columns: minmax(0, 1fr) 214px; gap: 18px; }
+        .pool { display: grid; grid-template-columns: repeat(30, 1fr); gap: 2px; transition: opacity .2s; }
+        .pool.idle { opacity: .45; }
+        .blk { aspect-ratio: 1; border-radius: 2px; --f: 0%;
+               background: linear-gradient(to right, var(--col) var(--f), var(--tint) var(--f));
+               transition: --f .35s ease, opacity .2s; }
+        .blk.A { --col: var(--a); --tint: var(--a-t); }
+        .blk.B { --col: var(--b); --tint: var(--b-t); }
+        .blk.C { --col: var(--c); --tint: var(--c-t); }
+        .blk.F { background: var(--free); }
+        .blk.part { box-shadow: inset 0 0 0 1px var(--col); }
+        .blk.dim { opacity: .2; }
+        .blk.ring { outline: 2px solid var(--ink); outline-offset: 1px; position: relative; z-index: 1; opacity: 1; }
+        .idle-note { color: var(--muted); }
+
+        /* side column */
+        .bt-row { display: grid; grid-template-columns: auto 1fr; column-gap: 2px; align-items: baseline; padding: 4px 6px; font-size: 13px; cursor: default; border-radius: 3px; }
+        .bt-row:hover { background: var(--wash); }
+        .bt-row .ids { grid-column: 2; font-family: Consolas, Menlo, monospace; font-size: 11.5px; color: var(--ink2); }
+        .slots { display: grid; grid-template-columns: repeat(16, 1fr); gap: 2px; margin: 6px 0; }
+        .slot { aspect-ratio: 1; border-radius: 2px; background: var(--free); }
+        .slot.A { background: var(--a); } .slot.B { background: var(--b); } .slot.C { background: var(--c); }
+        .slot.res { background: #fff; box-shadow: inset 0 0 0 1px var(--ink2); }
+        .slot.new { box-shadow: 0 0 0 2px var(--ink); }
+        .dtext { font-size: 13px; margin: 0; }
+        .dtext + .dtext { margin-top: 4px; color: var(--ink2); }
+        .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--ink2); margin-top: 10px; }
+        .legend span { display: inline-flex; align-items: center; }
+
+        /* padded batch figure */
+        .two { display: grid; grid-template-columns: 1fr; gap: 6px; }
+        .bar-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 170px; gap: 10px; align-items: center; margin: 4px 0; font-size: 14px; }
+        .track { display: flex; gap: 2px; height: 18px; }
+        .seg-real { border-radius: 0 4px 4px 0; }
+        .seg-real.A { background: var(--a); } .seg-real.B { background: var(--b); } .seg-real.C { background: var(--c); }
+        .seg-pad { border-radius: 0 4px 4px 0; background: repeating-linear-gradient(135deg, #cfcec8 0 2px, #f3f2ee 2px 6px); box-shadow: inset 0 0 0 1px #d6d5cf; }
+        .bar-note { color: var(--ink2); font-variant-numeric: tabular-nums; font-size: 13px; }
+        .sum { font-size: 14px; margin: 6px 0 0 28px; }
+
+        /* prefix figure */
+        .seg { display: flex; flex-wrap: wrap; gap: 4px; }
+        .pf-row { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 10px; align-items: center; margin-top: 8px; font-size: 13px; }
+        .pf-cells { display: grid; grid-template-columns: repeat(125, 1fr); gap: 1px; }
+        .pf-cells i { height: 16px; border-radius: 1px; }
+        .pf-cells i.s { background: var(--slate); }
+        .pf-cells i.d { background: var(--slate-t); }
+        .pf-cells i.n { background: var(--c); }
+        .pf-brace { display: grid; grid-template-columns: repeat(125, 1fr); gap: 1px; }
+        .pf-brace div { grid-column: 1 / span 64; border: 1px solid var(--ink2); border-bottom: 0; height: 6px; }
+        .pf-brace-text { font-size: 13px; color: var(--ink2); }
+        .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+        .tile { background: var(--wash); padding: 8px 10px; }
+        .tile .k { font-size: 13px; color: var(--ink2); }
+        .tile .v { font-size: 22px; font-variant-numeric: tabular-nums; }
+
+        #tip { position: fixed; z-index: 10; pointer-events: none; background: var(--ink); color: #fff; font-size: 12px; line-height: 1.4;
+               padding: 5px 8px; border-radius: 3px; max-width: 240px; display: none; }
+
+        @media (max-width: 720px) {
+            .lower { grid-template-columns: 1fr; }
+            .bar-row { grid-template-columns: 18px minmax(0, 1fr); }
+            .bar-note { grid-column: 2; }
+            .tiles { grid-template-columns: 1fr; }
+        }
+        @media (prefers-reduced-motion: reduce) { .blk, .pool { transition: none; } }
+    </style>
+</head>
+<body>
+    <div class="container note">
+        <header class="header">
+            <h2>How a batched forward pass writes the KV cache</h2>
+            <p>gpu-tips, note 1. November 19th, 2026.</p>
+        </header>
+
+        <section>
+            <p>An inference engine such as vLLM runs many requests in one forward pass. The requests have different lengths, and each request has its own KV cache. This note shows how the new tokens of all requests go into one batch, and where the keys (K) and values (V) of each token go.</p>
+            <p>Each layer writes the K and V of a new token directly into the cache blocks of that token's request. No step cuts the KV out of an output tensor after the pass.</p>
+        </section>
+
+        <section>
+            <h2>The example</h2>
+            <p>Three requests are in the engine at the same time.</p>
+            <table>
+                <thead>
+                    <tr><th>Request</th><th class="num">Tokens in the cache</th><th class="num">New tokens in this step</th><th>Reason</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><span class="sw A"></span>A</td><td class="num">5,000</td><td class="num">1</td><td>A generates its next token.</td></tr>
+                    <tr><td><span class="sw B"></span>B</td><td class="num">800</td><td class="num">1</td><td>B generates its next token.</td></tr>
+                    <tr><td><span class="sw C"></span>C</td><td class="num">0</td><td class="num">2,000</td><td>C is a new prompt. All its tokens are new.</td></tr>
+                </tbody>
+            </table>
+            <p>This step has 2,002 new tokens.</p>
+        </section>
+
+        <section>
+            <h2>The flat batch</h2>
+            <p>The engine lays out the new tokens as one flat batch, <code>[A, B, C1, C2, …, C2000]</code>. The input to each layer has 2,002 rows, one row for each new token.</p>
+            <p>The cache is one large pool of blocks on the GPU, and all requests share it. In vLLM, one block holds the K and V of 16 tokens by default. A slot is the place of one token in a block. The slot number is the block number × 16 + the position in the block.</p>
+            <p>The engine passes two index tables with the batch. The names are the names that vLLM uses.</p>
+            <table>
+                <thead>
+                    <tr><th>Table</th><th>Content</th><th>Used to</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Slot mapping</td><td>For each row, the cache slot where its K and V go</td><td>Write</td></tr>
+                    <tr><td>Block table</td><td>For each request, the list of cache blocks that it owns</td><td>Read</td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section>
+            <h2>One layer, step by step</h2>
+            <p>The figure shows the batch, the pool and the two tables. The pool in the figure has 600 blocks. Use the buttons to go through one layer. Point at a row or a block to see where its data is.</p>
+
+            <div class="fig" id="layerFig">
+                <div class="steps" role="tablist" aria-label="Steps of one layer" id="steps">
+                    <button role="tab" data-step="0">Batch</button>
+                    <button role="tab" data-step="1">1 Project</button>
+                    <button role="tab" data-step="2">2 Write</button>
+                    <button role="tab" data-step="3">3 Attend</button>
+                    <button role="tab" data-step="4">4 Feed-forward</button>
+                    <button role="tab" data-step="5">After the last layer</button>
+                </div>
+                <div class="nav">
+                    <button type="button" id="prev">◀ Back</button>
+                    <button type="button" id="next">Next ▶</button>
+                </div>
+                <p class="cap" id="cap" aria-live="polite"></p>
+
+                <div class="ptitle"><b>Flat batch</b>, 2,002 rows</div>
+                <div class="strip" id="strip"></div>
+                <div class="attend" id="attend" hidden>
+                    <label for="crow">Row of C</label>
+                    <input type="range" id="crow" min="1" max="2000" value="1000">
+                    <span class="readout" id="readout"></span>
+                </div>
+
+                <div class="lower">
+                    <div>
+                        <div class="ptitle"><b>KV block pool on the GPU</b>, 600 blocks of 16 slots <span class="idle-note" id="idleNote"></span></div>
+                        <div class="pool" id="pool"></div>
+                        <div class="legend">
+                            <span><span class="sw A"></span>A</span>
+                            <span><span class="sw B"></span>B</span>
+                            <span><span class="sw C"></span>C</span>
+                            <span><span class="sw F"></span>free</span>
+                            <span>A block with an outline is not full.</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="ptitle"><b>Block table</b></div>
+                        <div id="btable"></div>
+                        <div class="ptitle"><b>One block</b></div>
+                        <div id="detail"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section>
+            <h2>The two outputs</h2>
+            <p>A forward pass has two outputs. The engine cuts only one of them.</p>
+            <ul>
+                <li>The KV cache is never cut. Each layer writes it in place in step 2. The slot mapping puts each K and V in the blocks of the correct request.</li>
+                <li>The final hidden states are cut. After the last layer there are 2,002 rows. The engine takes one row for each request. These are row 0 for A, row 1 for B and row 2001 for C, which is the last prompt token of C. Each of these 3 rows gives the scores for the next token of its request. The engine discards the other 1,999 rows of C. They were necessary only to make the KV of C.</li>
+            </ul>
+        </section>
+
+        <section>
+            <h2>Why the attention is not one square matrix</h2>
+            <p>A plain batched attention needs all requests at the same length, which is 5,001 here. B then carries 4,200 empty positions and C carries 3,001. Approximately half of the 15,003 positions are empty.</p>
+
+            <div class="fig">
+                <div class="ptitle" style="margin-top:0"><b>All requests padded to 5,001 positions</b></div>
+                <div class="bar-row"><span>A</span><div class="track"><div class="seg-real A" style="width:100%" data-tip="A: 5,001 positions in use"></div></div><span class="bar-note">5,001 in use</span></div>
+                <div class="bar-row"><span>B</span><div class="track"><div class="seg-real B" style="width:16.02%" data-tip="B: 801 positions in use"></div><div class="seg-pad" style="flex:1" data-tip="B: 4,200 empty positions"></div></div><span class="bar-note">801 in use, 4,200 empty</span></div>
+                <div class="bar-row"><span>C</span><div class="track"><div class="seg-real C" style="width:39.99%" data-tip="C: 2,000 positions in use"></div><div class="seg-pad" style="flex:1" data-tip="C: 3,001 empty positions"></div></div><span class="bar-note">2,000 in use, 3,001 empty</span></div>
+                <p class="sum">15,003 positions. 7,201 of them (48%) are empty.</p>
+
+                <div class="ptitle"><b>With the block table</b></div>
+                <div class="bar-row"><span>A</span><div class="track"><div class="seg-real A" style="width:100%" data-tip="A: 5,001 positions in 313 blocks"></div></div><span class="bar-note">5,001 in 313 blocks</span></div>
+                <div class="bar-row"><span>B</span><div class="track"><div class="seg-real B" style="width:16.02%" data-tip="B: 801 positions in 51 blocks"></div></div><span class="bar-note">801 in 51 blocks</span></div>
+                <div class="bar-row"><span>C</span><div class="track"><div class="seg-real C" style="width:39.99%" data-tip="C: 2,000 positions in 125 blocks"></div></div><span class="bar-note">2,000 in 125 blocks</span></div>
+                <p class="sum">7,802 positions. None is empty.</p>
+                <div class="legend"><span><span class="sw P"></span>empty position (padding)</span></div>
+            </div>
+
+            <p>The block table removes the empty positions. Each row reads only the blocks that exist for its request. Thus requests of very different lengths share one batch, and no position is empty.</p>
+        </section>
+
+        <section>
+            <h2>What follows from the block pool</h2>
+
+            <h3>Prefix hits on the GPU</h3>
+            <p>Let request D run at the same time as C. The first 1,024 tokens of the two prompts are the same. These tokens fill 64 blocks, and the 64 blocks are in the pool already. The engine puts those blocks into the block table of C and removes those 1,024 rows from the batch. It copies nothing and computes nothing for these tokens.</p>
+            <p>A hit always has a whole number of blocks. The engine identifies each full block by a hash of its tokens and of all the tokens before it.</p>
+
+            <div class="fig" id="prefixFig">
+                <div class="seg" role="group" aria-label="Request D">
+                    <button type="button" data-on="0" aria-pressed="true">D is not in the engine</button>
+                    <button type="button" data-on="1" aria-pressed="false">D has the same first 1,024 tokens</button>
+                </div>
+                <div class="pf-row" id="pfBraceRow"><span></span><div><div class="pf-brace-text">64 blocks, 1,024 tokens, reference count 2</div><div class="pf-brace"><div></div></div></div></div>
+                <div class="pf-row"><span>Blocks of D</span><div><div class="pf-cells" id="pfDCells"></div><div class="pf-brace-text" id="pfDNone">D is not in the engine.</div></div></div>
+                <div class="pf-row"><span>Blocks of C</span><div class="pf-cells" id="pfCCells"></div></div>
+                <div class="legend">
+                    <span><span class="sw C"></span>block that C computes in this step</span>
+                    <span><span class="sw S"></span>block in the pool already, shared</span>
+                    <span><span class="sw D"></span>other block of D</span>
+                </div>
+                <div class="tiles">
+                    <div class="tile"><div class="k">Rows of C in the batch</div><div class="v" id="tRowsC"></div></div>
+                    <div class="tile"><div class="k">Rows in the batch</div><div class="v" id="tRows"></div></div>
+                    <div class="tile"><div class="k">K and V copied for the hit</div><div class="v">0</div></div>
+                </div>
+            </div>
+
+            <h3>Blocks shared by reference</h3>
+            <p>The 64 blocks are now in two block tables. Each block has a reference count, which is 2 here. The engine releases a block only when no request uses it. A released block keeps its data until the engine needs the space. Thus a later request with the same prefix can still get a hit.</p>
+
+            <h3>LMCache</h3>
+            <p>LMCache enters at the same place. It copies a loaded chunk into pool blocks, and those blocks go into the block table of the request. A layer reads these blocks in the same way as all other blocks.</p>
+            <table>
+                <thead>
+                    <tr><th>Where the prefix is</th><th>What the engine does</th><th>Rows in the batch</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>In blocks of the GPU pool</td><td>Puts the blocks into the block table. It copies nothing.</td><td>Removed</td></tr>
+                    <tr><td>In a chunk that LMCache holds</td><td>Copies the chunk into pool blocks. Then puts the blocks into the block table.</td><td>Removed</td></tr>
+                    <tr><td>In no cache</td><td>Computes K and V in each layer and writes them to the slots.</td><td>Kept</td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <p>Back to <a href="./index.html">gpu-tips</a> or <a href="../index.html">Home</a></p>
+        <p id="redirection">My past life... <a href="../index2.html">here</a></p>
+    </div>
+
+    <div id="tip" role="tooltip"></div>
+
+    <script>
+    (function () {
+        'use strict';
+        var BS = 16;
+        // Physical layout of the pool: runs of blocks in block-number order. F = free.
+        var RUNS = [['F',6],['C',18],['A',120],['B',20],['A',46],['F',9],['B',14],['A',30],['C',40],['A',22],['B',6],['F',12],
+                    ['A',41],['C',27],['B',5],['A',28],['F',20],['C',24],['A',14],['B',3],['A',8],['C',16],['B',2],['A',4],['B',1],['F',64]];
+        var REQ = { A: { cached: 5000, fresh: 1 }, B: { cached: 800, fresh: 1 }, C: { cached: 0, fresh: 2000 } };
+        var blocks = [], table = { A: [], B: [], C: [] };
+        RUNS.forEach(function (r) {
+            for (var i = 0; i < r[1]; i++) {
+                var b = { id: blocks.length, owner: r[0], idx: r[0] === 'F' ? -1 : table[r[0]].length };
+                if (r[0] !== 'F') table[r[0]].push(b.id);
+                blocks.push(b);
+            }
+        });
+        var nFree = blocks.length - table.A.length - table.B.length - table.C.length;
+
+        function fmt(n) { return n.toLocaleString('en-US'); }
+        function totalOf(o, written) { return REQ[o].cached + (written ? REQ[o].fresh : 0); }
+        function used(b, written) { return b.owner === 'F' ? 0 : Math.max(0, Math.min(BS, totalOf(b.owner, written) - b.idx * BS)); }
+        function blockOf(o, t) { return table[o][Math.floor((t - 1) / BS)]; }
+        function slotOf(o, t) { return blockOf(o, t) * BS + (t - 1) % BS; }
+        function rowOf(o, t) { return o === 'A' ? 0 : o === 'B' ? 1 : t + 1; }
+
+        var COLS = [ { o: 'A', t: 5001 }, { o: 'B', t: 801 }, { o: 'C', t: 1 }, { o: 'C', t: 2 }, { o: 'C', t: 3 }, { gap: true }, { o: 'C', t: 2000 } ];
+        var STEP_LABEL = ['state', 'project', 'write', 'attend', 'feed-forward', 'output'];
+        var CAPS = [
+            '<b>The batch.</b> The engine puts all new tokens into one batch of 2,002 rows. A and B each give one row, because each generates one token in this step. C gives 2,000 rows, because all of its prompt is new. Before the layers run, the scheduler gives each request the blocks that it needs. C gets 125 empty blocks and B gets one new block.',
+            '<b>Step 1, project.</b> All 2,002 rows go through <code>W_Q</code>, <code>W_K</code> and <code>W_V</code> in one matrix product. The result is 2,002 queries, keys and values. The request boundaries have no effect in this step, and the pool is not used.',
+            '<b>Step 2, write.</b> The engine copies the K and V of each row to the slot that the slot mapping gives. The row of A goes into the last block of A. The row of B goes into the new block of B. The 2,000 rows of C fill the 125 blocks of C. After this step, the KV of each request is in its own blocks.',
+            '<b>Step 3, attend.</b> The query of each row is compared with the keys in the blocks of its own request. The block table gives these blocks. Select a row to see the blocks that it reads. A row of C reads only the positions of C up to itself.',
+            '<b>Step 4, feed-forward.</b> The 2,002 attention outputs go through the feed-forward part in one matrix product. Then the next layer does the same four steps. Each layer has its own cache tensor. The slot mapping and the block table are the same for all layers.',
+            '<b>After the last layer.</b> There are 2,002 rows of hidden states. The engine keeps one row for each request, which are rows 0, 1 and 2001. Each of these rows gives the scores for the next token of its request. The engine discards the other 1,999 rows of C. The KV cache is not cut, because each layer wrote it in place in step 2.'
+        ];
+
+        var step = 0, prevStep = 0;
+        var sel = { o: 'A', t: 5001 };       // row selected in the batch
+        var pinned = blockOf('A', 5001);     // block shown in the "One block" panel
+        var hoverBlock = null, hoverSlot = null, hoverReq = null;
+
+        var $ = function (id) { return document.getElementById(id); };
+        var poolEl = $('pool'), stripEl = $('strip'), tip = $('tip');
+
+        // ---------- tooltip ----------
+        function showTip(text, ev) {
+            tip.textContent = text; tip.style.display = 'block';
+            var x = Math.min(ev.clientX + 12, window.innerWidth - tip.offsetWidth - 8);
+            var y = ev.clientY + 14;
+            if (y + tip.offsetHeight > window.innerHeight - 4) y = ev.clientY - tip.offsetHeight - 8;
+            tip.style.left = x + 'px'; tip.style.top = y + 'px';
+        }
+        function hideTip() { tip.style.display = 'none'; }
+        document.addEventListener('mousemove', function (ev) {
+            var el = ev.target.closest && ev.target.closest('[data-tip]');
+            if (el) showTip(el.getAttribute('data-tip'), ev); else if (!ev.target.closest || !ev.target.closest('.blk')) hideTip();
+        });
+
+        // ---------- pool ----------
+        var blkEls = blocks.map(function (b) {
+            var el = document.createElement('div');
+            el.className = 'blk ' + b.owner;
+            el.dataset.id = b.id;
+            poolEl.appendChild(el);
+            return el;
+        });
+        function blockTip(b) {
+            if (b.owner === 'F') return 'Block ' + b.id + ', free';
+            return 'Block ' + b.id + '. Block ' + (b.idx + 1) + ' of ' + table[b.owner].length + ' of ' + b.owner + '. ' +
+                   used(b, step >= 2) + ' of 16 slots in use.';
+        }
+        poolEl.addEventListener('mousemove', function (ev) {
+            var el = ev.target.closest('.blk');
+            if (!el) { hideTip(); return; }
+            var b = blocks[+el.dataset.id];
+            showTip(blockTip(b), ev);
+            if (hoverBlock !== b.id) { hoverBlock = b.id; hoverSlot = null; renderPool(); renderDetail(); }
+        });
+        poolEl.addEventListener('mouseleave', function () { hideTip(); hoverBlock = null; renderPool(); renderDetail(); });
+        poolEl.addEventListener('click', function (ev) {
+            var el = ev.target.closest('.blk'); if (!el) return;
+            pinned = +el.dataset.id; renderPool(); renderDetail();
+        });
+
+        function emphasis(b) {
+            if (hoverReq) return b.owner === hoverReq ? '' : 'dim';
+            if (step === 2) return (b.owner !== 'F' && used(b, true) !== used(b, false)) ? '' : 'dim';
+            if (step === 3) return (b.owner === sel.o && b.idx < Math.ceil(sel.t / BS)) ? '' : 'dim';
+            return '';
+        }
+        function renderPool() {
+            var written = step >= 2, shown = hoverBlock != null ? hoverBlock : pinned;
+            poolEl.classList.toggle('idle', (step === 1 || step === 4) && !hoverReq);
+            $('idleNote').textContent = (step === 1 || step === 4) ? '(not used in this step)' : '';
+            blocks.forEach(function (b, i) {
+                var el = blkEls[i], cls = 'blk ' + b.owner;
+                if (b.owner !== 'F') {
+                    var u = used(b, written);
+                    el.style.setProperty('--f', (u / BS * 100) + '%');
+                    el.style.transitionDelay = (step === 2 && prevStep < 2 && b.owner === 'C') ? (b.idx * 5) + 'ms' : '0ms';
+                    if (u < BS) cls += ' part';
+                }
+                var e = emphasis(b); if (e) cls += ' ' + e;
+                if (b.id === shown) cls += ' ring';
+                el.className = cls;
+            });
+        }
+
+        // ---------- block table ----------
+        function renderTable() {
+            var html = '';
+            ['A', 'B', 'C'].forEach(function (o) {
+                var t = table[o];
+                html += '<div class="bt-row" data-req="' + o + '"><span><span class="sw ' + o + '"></span></span><span><b>' + o + '</b>, ' + t.length + ' blocks</span>' +
+                        '<span class="ids">[' + t[0] + ', ' + t[1] + ', ' + t[2] + ', …, ' + t[t.length - 1] + ']</span></div>';
+            });
+            html += '<div class="bt-row" data-req="F"><span><span class="sw F"></span></span><span>free, ' + nFree + ' blocks</span></div>';
+            $('btable').innerHTML = html;
+            Array.prototype.forEach.call($('btable').querySelectorAll('.bt-row'), function (row) {
+                row.addEventListener('mouseenter', function () { hoverReq = row.dataset.req; renderPool(); });
+                row.addEventListener('mouseleave', function () { hoverReq = null; renderPool(); });
+            });
+        }
+
+        // ---------- one block ----------
+        function renderDetail() {
+            var id = hoverBlock != null ? hoverBlock : pinned, b = blocks[id], written = step >= 2, html = '';
+            if (b.owner === 'F') {
+                html = '<div class="slots">' + new Array(17).join('<div class="slot"></div>') + '</div>' +
+                       '<p class="dtext"><b>Block ' + b.id + '</b> is free.</p>';
+                $('detail').innerHTML = html; return;
+            }
+            var r = REQ[b.owner], total = totalOf(b.owner, written), cells = '', line2 = '', nNew = 0;
+            // The slot in focus: the slot under the pointer, or the slot of the selected row.
+            var focus = hoverSlot !== null ? hoverSlot : (blockOf(sel.o, sel.t) === id ? slotOf(sel.o, sel.t) : null);
+            for (var off = 0; off < BS; off++) {
+                var t = b.idx * BS + off + 1, slot = id * BS + off, cls = 'slot';
+                var isNew = t > r.cached && t <= r.cached + r.fresh, inUse = t <= total;
+                if (inUse) cls += ' ' + b.owner; else if (isNew) cls += ' res';
+                if (isNew) nNew++;
+                if (slot === focus) {
+                    cls += ' new';
+                    line2 = 'Slot ' + fmt(slot) + ' = ' + b.id + ' × 16 + ' + off + '. ' +
+                        (inUse ? 'It holds the K and V of token ' + fmt(t) + ' of ' + b.owner + (isNew ? ', written in this step.' : '.')
+                         : isNew ? 'The K and V of token ' + fmt(t) + ' of ' + b.owner + ' go here in step 2.' : 'It is empty.');
+                }
+                var what = inUse ? 'holds token ' + fmt(t) + ' of ' + b.owner
+                         : isNew ? 'is reserved for token ' + fmt(t) + ' of ' + b.owner : 'is empty';
+                cells += '<div class="' + cls + '" data-tip="Slot ' + fmt(slot) + ' ' + what + '."></div>';
+            }
+            if (!line2) {
+                var u = used(b, written);
+                line2 = u + ' of 16 slots ' + (u === 1 ? 'is' : 'are') + ' in use.' +
+                        (nNew ? (written ? ' Step 2 wrote ' + nNew + ' of them.' : ' Step 2 writes ' + nNew + ' more.') : '');
+            }
+            html = '<div class="slots">' + cells + '</div>' +
+                   '<p class="dtext"><b>Block ' + b.id + '</b> is block ' + (b.idx + 1) + ' of ' + table[b.owner].length + ' of ' + b.owner +
+                   '. It has slots ' + fmt(id * BS) + ' to ' + fmt(id * BS + BS - 1) + '.</p>' +
+                   '<p class="dtext">' + line2 + '</p>';
+            $('detail').innerHTML = html;
+        }
+
+        // ---------- batch strip ----------
+        function statusOf(c) {
+            var Q = '<span class="chip">Q</span>', K = '<span class="chip">K</span>', V = '<span class="chip">V</span>';
+            switch (step) {
+                case 0: return 'new token';
+                case 1: return Q + K + V;
+                case 2: return K.replace('chip', 'chip on') + V.replace('chip', 'chip on') + '&nbsp;to slot';
+                case 3: return Q.replace('chip', 'chip on') + '&nbsp;' + fmt(c.t) + (c.t === 1 ? ' key' : ' keys');
+                case 4: return 'feed-forward';
+                default: return (c.o !== 'C' || c.t === 2000) ? '✓ kept' : 'discarded';
+            }
+        }
+        function renderStrip() {
+            var html = '<div class="lab"><div class="cell">row</div><div class="cell">token</div><div class="cell">slot mapping</div><div class="cell st">' + STEP_LABEL[step] + '</div></div>';
+            COLS.forEach(function (c, i) {
+                if (c.gap) {
+                    // The rows of C that are not drawn. If one of them is selected, this column shows it.
+                    var mid = sel.o === 'C' && sel.t > 3 && sel.t < 2000;
+                    html += '<div class="col gap' + (mid ? ' sel' : '') + (step === 5 ? ' out' : '') + '">' +
+                            '<div class="cell r">' + (mid ? '… row ' + rowOf('C', sel.t) + ' …' : '…') + '</div>' +
+                            '<div class="cell"><span class="sw C"></span>C · ' + (mid ? fmt(sel.t) : '…') + '</div>' +
+                            '<div class="cell">' + (mid ? fmt(slotOf('C', sel.t)) : '…') + '</div>' +
+                            '<div class="cell st">' + (mid ? statusOf(sel) : step === 5 ? 'discarded' : '1,996 more') + '</div></div>';
+                    return;
+                }
+                var isSel = sel.o === c.o && sel.t === c.t, out = step === 5 && c.o === 'C' && c.t !== 2000;
+                html += '<button type="button" class="col' + (isSel ? ' sel' : '') + (out ? ' out' : '') + '" data-i="' + i + '">' +
+                        '<div class="cell r">row ' + rowOf(c.o, c.t) + '</div>' +
+                        '<div class="cell"><span class="sw ' + c.o + '"></span>' + c.o + ' · ' + fmt(c.t) + '</div>' +
+                        '<div class="cell">' + fmt(slotOf(c.o, c.t)) + '</div>' +
+                        '<div class="cell st">' + statusOf(c) + '</div></button>';
+            });
+            stripEl.innerHTML = html;
+        }
+        stripEl.addEventListener('click', function (ev) {
+            var el = ev.target.closest('button.col'); if (!el) return;
+            var c = COLS[+el.dataset.i];
+            select(c.o, c.t);
+        });
+        stripEl.addEventListener('mouseover', function (ev) {
+            var el = ev.target.closest('button.col'); if (!el) return;
+            var c = COLS[+el.dataset.i];
+            hoverBlock = blockOf(c.o, c.t); hoverSlot = slotOf(c.o, c.t); renderPool(); renderDetail();
+        });
+        stripEl.addEventListener('mouseleave', function () { hoverBlock = null; hoverSlot = null; renderPool(); renderDetail(); });
+
+        function select(o, t) {
+            sel = { o: o, t: t }; pinned = blockOf(o, t);
+            if (o === 'C') $('crow').value = t;
+            renderAll();
+        }
+        $('crow').addEventListener('input', function () { select('C', +this.value); });
+
+        function renderReadout() {
+            $('attend').hidden = step !== 3;
+            var n = Math.ceil(sel.t / BS);
+            $('readout').textContent = 'Row ' + rowOf(sel.o, sel.t) + ' (token ' + fmt(sel.t) + ' of ' + sel.o + ') reads ' + fmt(sel.t) +
+                (sel.t === 1 ? ' key' : ' keys') + ' in ' + n + (n === 1 ? ' block.' : ' blocks.');
+        }
+
+        // ---------- steps ----------
+        var tabs = Array.prototype.slice.call($('steps').querySelectorAll('button'));
+        function renderAll() {
+            tabs.forEach(function (t, i) { t.setAttribute('aria-selected', i === step ? 'true' : 'false'); t.tabIndex = i === step ? 0 : -1; });
+            $('prev').disabled = step === 0; $('next').disabled = step === CAPS.length - 1;
+            $('cap').innerHTML = CAPS[step];
+            renderStrip(); renderReadout(); renderPool(); renderDetail();
+        }
+        function go(n) {
+            n = Math.max(0, Math.min(CAPS.length - 1, n)); if (n === step) return;
+            prevStep = step; step = n;
+            if (step <= 2) { sel = { o: 'A', t: 5001 }; pinned = blockOf('A', 5001); }
+            renderAll(); prevStep = step;
+        }
+        tabs.forEach(function (t) { t.addEventListener('click', function () { go(+t.dataset.step); }); });
+        $('steps').addEventListener('keydown', function (ev) {
+            if (ev.key === 'ArrowRight') { go(step + 1); tabs[step].focus(); }
+            if (ev.key === 'ArrowLeft') { go(step - 1); tabs[step].focus(); }
+        });
+        $('prev').addEventListener('click', function () { go(step - 1); });
+        $('next').addEventListener('click', function () { go(step + 1); });
+
+        renderTable(); renderAll();
+
+        // ---------- prefix figure ----------
+        var HIT = 64, C_BLOCKS = 125, D_BLOCKS = 94;
+        function cells(n, f) { var s = ''; for (var i = 0; i < n; i++) s += '<i class="' + f(i) + '"></i>'; return s; }
+        function renderPrefix(on) {
+            $('pfDCells').innerHTML = cells(D_BLOCKS, function (i) { return i < HIT ? 's' : 'd'; });
+            $('pfCCells').innerHTML = cells(C_BLOCKS, function (i) { return on && i < HIT ? 's' : 'n'; });
+            $('pfDCells').style.display = on ? '' : 'none';
+            $('pfDNone').style.display = on ? 'none' : '';
+            $('pfBraceRow').style.visibility = on ? 'visible' : 'hidden';
+            var rowsC = 2000 - (on ? HIT * BS : 0);
+            $('tRowsC').textContent = fmt(rowsC);
+            $('tRows').textContent = fmt(rowsC + 2);
+            Array.prototype.forEach.call($('prefixFig').querySelectorAll('.seg button'), function (b) {
+                b.setAttribute('aria-pressed', (b.dataset.on === '1') === on ? 'true' : 'false');
+            });
+        }
+        Array.prototype.forEach.call($('prefixFig').querySelectorAll('.seg button'), function (b) {
+            b.addEventListener('click', function () { renderPrefix(b.dataset.on === '1'); });
+        });
+        renderPrefix(false);
+
+        console.assert(blocks.length === 600 && table.A.length === 313 && table.B.length === 51 && table.C.length === 125, 'pool layout');
+    })();
+    </script>
+</body>
+</html>
